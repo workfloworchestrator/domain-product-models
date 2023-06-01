@@ -1,2 +1,3 @@
-# domain-product-models
-SURF's domain models.
+# Domain models
+This repository contains a bare bones models from different organisations.
+
