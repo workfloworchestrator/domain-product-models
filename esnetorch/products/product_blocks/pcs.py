@@ -1,18 +1,43 @@
+# Copyright 2019-2023 surf.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from typing import Any, Dict, List, Optional, TypeVar, Union
 from uuid import UUID
 
 from orchestrator.domain.base import ProductBlockModel, SubscriptionInstanceList
-from orchestrator.types import SubscriptionLifecycle
-from pydantic import Field
+from orchestrator.types import SubscriptionLifecycle, strEnum
+from orchestrator.forms.validators import Choice
 
-from esnetorch.config.esdb import ESDBCircuitStateStr, ESDBInterfaceAdminState, ESDBInterfaceEthEncap
-from esnetorch.config.nso import NSOPortStates
+from pydantic import Field
 
 # In here, we define the values expected for a product block at each phase of the of the Subscription Lifecycle
 # All resource types used by a product block need to be explicitly called out here and assigned
 # expected types
 
 T = TypeVar("T", covariant=True)
+
+class ESDBCircuitStateStr(strEnum):
+    IN_SERVICE = "In-service"
+    DEPLOYMENT = "Deployment"
+    MAINTENANCE = "Maintenance"
+    PLANNING = "Planning"
+    DECOM = "Decom"
+
+
+class NSOPortStates(Choice):
+    UP = "up"
+    DOWN = "down"
+    NOCONFIG = "no-config"
 
 
 class CircuitBlock(ProductBlockModel, product_block_name="Circuit Block"):
@@ -34,31 +59,6 @@ class LagMember(
     equipment_interface_id: int
     port_name: str
     admin_state: NSOPortStates
-
-    @classmethod
-    def from_esdb_ifce(
-        cls,
-        owner_subscription_id: UUID,
-        esdb_equip_iface: Dict[str, Any],
-        admin_state: Optional[NSOPortStates] = NSOPortStates.UP,
-    ) -> "LagMember":
-        """Create and return a new instance of a LagMember block class for use in other serialization models
-        from an esdb equipment_interface.
-
-        Args:
-            owner_subscription_id (UUID): UUID of top-level subscription
-            esdb_equip_iface (Dict[str, Any]): Dictionary object retrieved from ESDB
-            admin_state (NSOPortStates, optional): Admin-state to set on new LagMember object. Defaults to `NSOPortStates.UP`.
-
-        Returns:
-            LagMember: newly instantiated LagMember product block domain model instance
-        """
-        return cls.new(
-            owner_subscription_id,
-            port_name=esdb_equip_iface["interface"],
-            equipment_interface_id=esdb_equip_iface["id"],
-            admin_state=admin_state,
-        )
 
     class Config:
         use_enum_values = True
@@ -95,31 +95,6 @@ class EquipmentInterfaceBlockInactive(ProductBlockModel, product_block_name="Equ
                 if getattr(member, key) == value:
                     return member
         return None
-
-    @classmethod
-    def from_esdb_iface(
-        cls,
-        esdb_iface: Dict[str, Any],
-        subscription_id: UUID,
-        related_node_sub_id: UUID,
-        enable_fec: bool = False,
-        admin_states: Dict[int, Any] = {},
-    ) -> Union["EquipmentInterfaceBlockInactive", "EquipmentInterfaceBlockProvisioning", "EquipmentInterfaceBlock"]:
-        members = [
-            LagMember.from_esdb_ifce(subscription_id, ifce, admin_state=admin_states.get(ifce["id"], NSOPortStates.UP))
-            for ifce in esdb_iface.get("grouped_interfaces", [])
-        ]
-        return EquipmentInterfaceBlock.new(
-            equipment_interface_id=esdb_iface["id"],
-            admin_state=admin_states.get(esdb_iface["id"], ESDBInterfaceAdminState.UP),
-            node_subscription_id=related_node_sub_id,
-            speed=esdb_iface["interface_bandwidth"]["name"],
-            subscription_id=subscription_id,
-            eth_encap=ESDBInterfaceEthEncap.DOT1Q if esdb_iface.get("tagged") else ESDBInterfaceEthEncap.ACCESS,
-            lag_members=members,
-            enable_fec=enable_fec,
-        )
-
 
 class EquipmentInterfaceBlockProvisioning(
     EquipmentInterfaceBlockInactive, lifecycle=[SubscriptionLifecycle.PROVISIONING]

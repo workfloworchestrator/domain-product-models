@@ -1,12 +1,24 @@
+# Copyright 2019-2023 surf.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from typing import List, Optional, TypeVar, Union
 from uuid import UUID
 
 import structlog
 from orchestrator.domain.base import ProductBlockModel, SubscriptionInstanceList
-from orchestrator.types import SubscriptionLifecycle
+from orchestrator.types import SubscriptionLifecycle, strEnum
 from pydantic import Field
 
-from esnetorch.config.nso import NSOMirrorCollectEnum
 from esnetorch.products.product_blocks.pcs import (
     EquipmentInterfaceBlock,
     EquipmentInterfaceBlockInactive,
@@ -14,15 +26,16 @@ from esnetorch.products.product_blocks.pcs import (
     LagMember,
 )
 from esnetorch.products.product_blocks.service_edge import EdgeBlock, EdgeBlockInactive, EdgeBlockProvisioning
-from esnetorch.services.subscriptions import (
-    retrieve_subscription_list_by_filters,
-    retrieve_subscriptions_by_type_and_instance_values,
-)
+
 
 T = TypeVar("T", covariant=True)
 
 logger = structlog.get_logger(__name__)
 
+class NSOMirrorCollectEnum(strEnum):
+    BOTH = "both"
+    INGRESS = "ingress"
+    EGRESS = "egress"
 
 # If this is set to min_items = 1, the list will initialize populated
 # with 1 empty EdgeBlockInactive
@@ -40,41 +53,6 @@ class MirrorBlock(
     collect: NSOMirrorCollectEnum
     port_name: Optional[str] = None
     mirror_sources_subscription_id: List[UUID]  # Reference(s) to PCS || ServiceEdge subscription instances
-
-    @classmethod
-    def from_esdb(cls, esdb_mirror: dict, owner_subscription_id: UUID) -> "MirrorBlock":
-        esdb_equip_iface_id = esdb_mirror["source_port"]["id"]
-        # Look for a PCS subscription associated with the mirror source
-        associated_sub = retrieve_subscription_list_by_filters(
-            {"equipment_interface_id": esdb_equip_iface_id}, product_type_in=("PhysicalConnection",)
-        )
-        if not associated_sub:
-            logger.warning(
-                f"No PCS subscription found containing an equipment interface with ESDB ID {esdb_equip_iface_id}."
-                " Attempting to find an associated EquipmentInterfaceBlock..."
-            )
-        # if there isn't an associated PCS, this may be an _internal_ host whose port is a mirror source,
-        # so check for an EquipmentInterfaceBlock
-        associated_sub = retrieve_subscriptions_by_type_and_instance_values(
-            "equipment_interface_id", str(esdb_equip_iface_id)
-        )
-        assert (
-            associated_sub is not None
-        ), f"No PCS subscription or EquipmentInterfaceBlock found containing an equipment interface with ESDB ID {esdb_equip_iface_id}"
-        dest_vlan = esdb_mirror["destination_vlan"]["vlan_id"]
-        collect = esdb_mirror["mirror_type"].lower()
-        port_name = esdb_mirror.get("source_port", {}).get("interface")
-        # TODO: in future, multiple service edges may be able to defined as mirror sources?
-        # For now only a single equipment interface can be defined, which is a limitation of Nokia devices
-        mirror_sources = [associated_sub.subscription_id]
-
-        return cls.new(
-            owner_subscription_id,
-            vlan=dest_vlan,
-            collect=collect,
-            mirror_sources_subscription_id=mirror_sources,
-            port_name=port_name,
-        )
 
 
 """
@@ -104,8 +82,6 @@ class ConnectionBlock(ConnectionBlockProvisioning, lifecycle=[SubscriptionLifecy
 
 """
 Internal Host Connectivity Model
-
-Defined here: https://docs.google.com/document/d/1kywxfnIA2nUezOnAY1I14uaJtjdhGCqAk6uRl9I4DDE/edit#bookmark=id.phnk0if73bij
 
 This model represents connections from the network to an ESnet host, each defined in a specific way as product types
 """
